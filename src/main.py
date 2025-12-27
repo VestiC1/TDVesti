@@ -46,6 +46,8 @@ sprites['monstre_1'] = charger_sprite("towerDefense_tile245.png", (48, 48))
 sprites['monstre_2'] = charger_sprite("towerDefense_tile246.png", (48, 48))
 sprites['projectile'] = charger_sprite("bulletBlue1.png", (16, 16))
 sprites['explosion'] = charger_sprite("explosion1.png", (64, 64))
+# Sprite du héros
+sprites['hero'] = charger_sprite("towerDefense_tile271.png", (64, 64))
 
 print("✅ Sprites chargés")
 
@@ -164,6 +166,21 @@ class Monstre:
         if self.vie <= 0:
             self.vie = 0
             self.actif = False
+    
+    def attaquer_hero(self, hero):
+        """Attaque le héros s'il est proche"""
+        if not self.actif or not hero.actif:
+            return False
+        
+        dx = hero.x - self.x
+        dy = hero.y - self.y
+        distance = (dx**2 + dy**2)**0.5
+        
+        # Si le héros est très proche
+        if distance < 50:
+            hero.prendre_degats(0.5)  # 1 dégât par frame = beaucoup !
+            return True
+        return False
 
 # ========================================
 # CLASSE PROJECTILE
@@ -205,6 +222,44 @@ class Projectile:
             return
         rect = self.sprite.get_rect(center=(int(self.x), int(self.y)))
         ecran.blit(self.sprite, rect)
+
+# ========================================
+# CLASSE EFFET VISUEL
+# ========================================
+
+class Effet:
+    """Représente un effet visuel temporaire (explosion, etc.)"""
+    
+    def __init__(self, x, y, sprite, duree=0.3):
+        self.x = x
+        self.y = y
+        self.sprite = sprite
+        self.duree = duree  # Durée en secondes
+        self.temps_creation = time.time()
+        self.actif = True
+        self.alpha = 255  # Opacité
+    
+    def mettre_a_jour(self):
+        """Met à jour l'effet (fade out)"""
+        temps_ecoule = time.time() - self.temps_creation
+        
+        if temps_ecoule >= self.duree:
+            self.actif = False
+            return
+        
+        # Fade out progressif
+        progression = temps_ecoule / self.duree
+        self.alpha = int(255 * (1 - progression))
+    
+    def dessiner(self, ecran):
+        """Affiche l'effet avec transparence"""
+        if not self.actif:
+            return
+        
+        sprite_alpha = self.sprite.copy()
+        sprite_alpha.set_alpha(self.alpha)
+        rect = sprite_alpha.get_rect(center=(int(self.x), int(self.y)))
+        ecran.blit(sprite_alpha, rect)
 
 # ========================================
 # CLASSE TOUR
@@ -274,6 +329,144 @@ class Tour:
         ecran.blit(surface_portee, (self.x - self.portee, self.y - self.portee))
 
 # ========================================
+# CLASSE HÉROS
+# ========================================
+
+class Hero:
+    """Représente le héros contrôlable par le joueur"""
+    
+    def __init__(self, x, y, sprite):
+        self.x = x
+        self.y = y
+        self.sprite = sprite
+        self.vitesse = 4  # Vitesse de déplacement
+        
+        # Combat
+        self.vie_max = 100
+        self.vie = 100
+        self.portee = 120  # Portée d'attaque
+        self.degats = 20
+        self.cadence = 0.8  # Temps entre chaque tir
+        self.dernier_tir = 0
+        self.cible = None
+        
+        # État
+        self.actif = True
+    
+    def deplacer(self, touches):
+        """Déplace le héros selon les touches pressées"""
+        if not self.actif:
+            return
+        
+        # ZQSD ou Flèches
+        if touches[pygame.K_z] or touches[pygame.K_UP]:
+            self.y -= self.vitesse
+        if touches[pygame.K_s] or touches[pygame.K_DOWN]:
+            self.y += self.vitesse
+        if touches[pygame.K_q] or touches[pygame.K_LEFT]:
+            self.x -= self.vitesse
+        if touches[pygame.K_d] or touches[pygame.K_RIGHT]:
+            self.x += self.vitesse
+        
+        # Limiter aux bords de l'écran
+        self.x = max(32, min(LARGEUR - 32, self.x))
+        self.y = max(32, min(HAUTEUR - 32, self.y))
+    
+    def trouver_cible(self, liste_monstres):
+        """Trouve le monstre le plus proche dans la portée"""
+        meilleure_cible = None
+        distance_min = self.portee
+        
+        for monstre in liste_monstres:
+            if not monstre.actif:
+                continue
+            
+            dx = monstre.x - self.x
+            dy = monstre.y - self.y
+            distance = (dx**2 + dy**2)**0.5
+            
+            if distance <= self.portee and distance < distance_min:
+                meilleure_cible = monstre
+                distance_min = distance
+        
+        return meilleure_cible
+    
+    def attaquer(self, liste_projectiles):
+        """Tire sur la cible si possible"""
+        temps_actuel = time.time()
+        
+        if temps_actuel - self.dernier_tir >= self.cadence:
+            if self.cible and self.cible.actif:
+                # Créer un projectile spécial pour le héros
+                projectile = Projectile(
+                    self.x, self.y,
+                    self.cible,
+                    sprites['projectile'],
+                    self.degats,
+                    vitesse=10  # Plus rapide que les tours
+                )
+                liste_projectiles.append(projectile)
+                self.dernier_tir = temps_actuel
+    
+    def mettre_a_jour(self, touches, liste_monstres, liste_projectiles):
+        """Met à jour le héros (déplacement + attaque)"""
+        if not self.actif:
+            return
+        
+        self.deplacer(touches)
+        self.cible = self.trouver_cible(liste_monstres)
+        
+        if self.cible:
+            self.attaquer(liste_projectiles)
+    
+    def prendre_degats(self, degats):
+        """Le héros prend des dégâts"""
+        self.vie -= degats
+        if self.vie <= 0:
+            self.vie = 0
+            self.actif = False
+        
+        # Effet visuel de dégâts (le sprite clignote en rouge)
+        # On va dessiner un overlay rouge temporaire
+    
+    def dessiner(self, ecran):
+        """Affiche le héros et sa barre de vie"""
+        if not self.actif:
+            return
+        
+        # Dessiner le sprite
+        rect = self.sprite.get_rect(center=(int(self.x), int(self.y)))
+        ecran.blit(self.sprite, rect)
+        
+        # Effet de flash rouge si dégâts récents
+        # (On va utiliser un système plus simple)
+        
+        # Dessiner le cercle de portée (transparent)
+        surface_portee = pygame.Surface((self.portee * 2, self.portee * 2), pygame.SRCALPHA)
+        pygame.draw.circle(surface_portee, (100, 200, 255, 50), 
+                          (self.portee, self.portee), self.portee)
+        ecran.blit(surface_portee, (self.x - self.portee, self.y - self.portee))
+        
+        # Barre de vie
+        largeur_barre = 60
+        hauteur_barre = 8
+        barre_x = int(self.x - largeur_barre // 2)
+        barre_y = int(self.y - 40)
+        
+        # Fond rouge
+        pygame.draw.rect(ecran, (255, 0, 0), 
+                        (barre_x, barre_y, largeur_barre, hauteur_barre))
+        
+        # Vie verte
+        vie_largeur = int((self.vie / self.vie_max) * largeur_barre)
+        pygame.draw.rect(ecran, (0, 255, 0), 
+                        (barre_x, barre_y, vie_largeur, hauteur_barre))
+        
+        # Contour blanc
+        pygame.draw.rect(ecran, (255, 255, 255), 
+                        (barre_x, barre_y, largeur_barre, hauteur_barre), 2)
+
+# ========================================
 # VARIABLES GLOBALES DU JEU
 # ========================================
 
@@ -281,6 +474,7 @@ class Tour:
 liste_monstres = []
 liste_tours = []
 liste_projectiles = []
+liste_effets = []  # Liste des effets visuels
 
 # Ressources du joueur
 argent = 200
@@ -304,6 +498,10 @@ PRIX_TOUR_LASER = 100
 
 # État du jeu
 game_over = False
+kills_total = 0  # Compteur de monstres tués
+
+# Créer le héros au centre de la carte
+hero = Hero(LARGEUR // 2, HAUTEUR // 2, sprites['hero'])
 
 # ========================================
 # FONCTIONS DU JEU
@@ -402,6 +600,63 @@ def verifier_position_valide(x, y):
     
     return True
 
+def dessiner_interface():
+    """Dessine un panneau d'interface stylisé"""
+    # Panneau semi-transparent en haut à gauche
+    panneau = pygame.Surface((280, 220), pygame.SRCALPHA)  # AUGMENTE LA HAUTEUR à 220
+    panneau.fill((0, 0, 0, 180))
+    ecran.blit(panneau, (5, 5))
+    
+    # Bordure du panneau
+    pygame.draw.rect(ecran, (100, 100, 100), (5, 5, 280, 220), 2)  # HAUTEUR à 220
+    
+    fonte = pygame.font.Font(None, 32)
+    fonte_petite = pygame.font.Font(None, 24)
+    
+    # Vague avec icône
+    texte_vague = fonte.render(f"Vague {vague_actuelle}", True, (255, 255, 255))
+    ecran.blit(texte_vague, (15, 15))
+    
+    # Argent avec couleur dorée
+    texte_argent = fonte.render(f"💰 {argent}$", True, (255, 215, 0))
+    ecran.blit(texte_argent, (15, 50))
+    
+    # Vie de la base avec icône cœur
+    couleur_vie = (255, 0, 0) if vie_base <= 5 else (255, 100, 100)
+    texte_vie_base = fonte.render(f"❤️ Base: {vie_base}", True, couleur_vie)
+    ecran.blit(texte_vie_base, (15, 85))
+    
+    # Vie du héros avec barre de progression
+    texte_hero_label = fonte_petite.render("Héros:", True, (200, 200, 200))
+    ecran.blit(texte_hero_label, (15, 125))
+    
+    # Barre de vie du héros
+    barre_largeur = 200
+    barre_hauteur = 20
+    barre_x = 15
+    barre_y = 150
+    
+    # Fond de la barre
+    pygame.draw.rect(ecran, (100, 0, 0), (barre_x, barre_y, barre_largeur, barre_hauteur))
+    
+    # Vie actuelle
+    vie_proportion = hero.vie / hero.vie_max
+    couleur_vie_hero = (0, 255, 0) if vie_proportion > 0.5 else (255, 150, 0) if vie_proportion > 0.25 else (255, 0, 0)
+    pygame.draw.rect(ecran, couleur_vie_hero, 
+                    (barre_x, barre_y, int(barre_largeur * vie_proportion), barre_hauteur))
+    
+    # Texte sur la barre
+    texte_vie_hero = fonte_petite.render(f"{int(hero.vie)}/{int(hero.vie_max)}", True, (255, 255, 255))
+    ecran.blit(texte_vie_hero, (barre_x + 70, barre_y + 2))
+    
+    # Bordure de la barre
+    pygame.draw.rect(ecran, (255, 255, 255), (barre_x, barre_y, barre_largeur, barre_hauteur), 2)
+    
+    # ========== Compteur de kills ===================
+    texte_kills = fonte.render(f"💀 Kills: {kills_total}", True, (255, 100, 100))
+    ecran.blit(texte_kills, (15, 185))
+    # ================================================
+
 # ========================================
 # BOUCLE PRINCIPALE
 # ========================================
@@ -443,12 +698,21 @@ while en_cours:
                 liste_monstres.clear()
                 liste_tours.clear()
                 liste_projectiles.clear()
+                liste_effets.clear()
                 argent = 200
                 vie_base = 20
                 vague_actuelle = 1
                 monstres_par_vague = 5
                 vague_en_cours = False
                 game_over = False
+                kills_total = 0
+                
+                # Réinitialiser le héros
+                hero.x = LARGEUR // 2
+                hero.y = HAUTEUR // 2
+                hero.vie = hero.vie_max
+                hero.actif = True
+                
                 print("🔄 Jeu redémarré !")
         
         # Placer une tour avec la souris
@@ -473,9 +737,18 @@ while en_cours:
                 generer_monstre()
             verifier_fin_vague()
         
+        # ========== Mettre à jour le héros ==========
+        touches = pygame.key.get_pressed()
+        hero.mettre_a_jour(touches, liste_monstres, liste_projectiles)
+        # ======================================================
+        
         # Déplacer les monstres
-        for monstre in liste_monstres[:]:  # Copie de la liste pour itérer en sécurité
+        for monstre in liste_monstres[:]:
             monstre.deplacer()
+
+            # Attaquer le héros s'il est proche
+            if hero.actif:
+                monstre.attaquer_hero(hero)
             
             # Si le monstre arrive à la sortie
             if monstre.arrive and not monstre.recompense_donnee:
@@ -483,11 +756,16 @@ while en_cours:
                 monstre.recompense_donnee = True
                 print(f"💔 Un monstre est passé ! Vie restante: {vie_base}")
             
-            # Si le monstre meurt, donner l'argent UNE SEULE FOIS
+            # Si le monstre meurt, donner l'argent ET créer une explosion
             if not monstre.actif and monstre.vie <= 0 and not monstre.recompense_donnee:
                 argent += 10
+                kills_total += 1  # NOUVEAU
                 monstre.recompense_donnee = True
-                print(f"💰 +10$ (Total: {argent})")
+                print(f"💰 +10$ (Total: {argent}) | Kills: {kills_total}")
+                
+                # Créer une explosion
+                explosion = Effet(monstre.x, monstre.y, sprites['explosion'], duree=0.4)
+                liste_effets.append(explosion)
         
         # Nettoyer les monstres qui ne sont plus utiles
         liste_monstres = [m for m in liste_monstres if m.actif or (not m.actif and not m.recompense_donnee)]
@@ -503,10 +781,20 @@ while en_cours:
         # Nettoyer les projectiles inactifs
         liste_projectiles = [p for p in liste_projectiles if p.actif]
         
+        # Mettre à jour les effets visuels
+        for effet in liste_effets:
+            effet.mettre_a_jour()
+        
+        # Nettoyer les effets terminés
+        liste_effets = [e for e in liste_effets if e.actif]
+        
         # Vérifier Game Over
-        if vie_base <= 0:
+        if vie_base <= 0 or not hero.actif:
             game_over = True
-            print("💀 GAME OVER !")
+            if not hero.actif:
+                print("💀 Le héros est mort !")
+            else:
+                print("💀 GAME OVER !")
     
     # Dessiner tous les éléments
     for monstre in liste_monstres:
@@ -517,6 +805,13 @@ while en_cours:
     
     for projectile in liste_projectiles:
         projectile.dessiner(ecran)
+    
+    # Dessiner les effets visuels
+    for effet in liste_effets:
+        effet.dessiner(ecran)
+    
+    # Dessiner le héros
+    hero.dessiner(ecran)
     
     # Points d'entrée/sortie
     if 'entree' in points:
@@ -533,30 +828,50 @@ while en_cours:
     fonte = pygame.font.Font(None, 36)
     fonte_petite = pygame.font.Font(None, 28)
     
-    # Informations de jeu
-    texte_vague = fonte.render(f"Vague: {vague_actuelle}", True, (255, 255, 255))
-    ecran.blit(texte_vague, (10, 10))
-    
-    texte_argent = fonte.render(f"Argent: {argent}$", True, (255, 215, 0))
-    ecran.blit(texte_argent, (10, 50))
-    
-    texte_vie = fonte.render(f"Vie: {vie_base}", True, (255, 0, 0))
-    ecran.blit(texte_vie, (10, 90))
-    
-    # Aide aux touches
+    # Dessiner le panneau d'interface stylisé
     if not game_over:
-        y_offset = HAUTEUR - 150
-        texte_touches = fonte_petite.render("Touches:", True, (255, 255, 255))
-        ecran.blit(texte_touches, (10, y_offset))
+        dessiner_interface()
+    
+    # Informations de jeu
+    #texte_vague = fonte.render(f"Vague: {vague_actuelle}", True, (255, 255, 255))
+    #ecran.blit(texte_vague, (10, 10))
+    
+    #texte_argent = fonte.render(f"Argent: {argent}$", True, (255, 215, 0))
+    #ecran.blit(texte_argent, (10, 50))
+    
+    #texte_vie = fonte.render(f"Vie Base: {vie_base}", True, (255, 0, 0))
+    #ecran.blit(texte_vie, (10, 90))
+    
+    # Afficher la vie du héros
+    #texte_hero = fonte.render(f"Héros: {hero.vie}/{hero.vie_max}", True, (100, 200, 255))
+    #ecran.blit(texte_hero, (10, 130))
+    
+    # Panneau d'aide en bas (stylisé)
+    if not game_over:
+        # Fond du panneau
+        panneau_aide = pygame.Surface((400, 160), pygame.SRCALPHA)
+        panneau_aide.fill((0, 0, 0, 180))
+        ecran.blit(panneau_aide, (10, HAUTEUR - 170))
+        pygame.draw.rect(ecran, (100, 100, 100), (10, HAUTEUR - 170, 400, 160), 2)
         
-        texte_1 = fonte_petite.render(f"1 - Tour Canon ({PRIX_TOUR_CANON}$)", True, (150, 200, 255))
-        ecran.blit(texte_1, (10, y_offset + 30))
+        y_offset = HAUTEUR - 160
         
-        texte_2 = fonte_petite.render(f"2 - Tour Laser ({PRIX_TOUR_LASER}$)", True, (255, 150, 150))
-        ecran.blit(texte_2, (10, y_offset + 60))
+        # Titre
+        texte_touches = fonte_petite.render("⌨️ Contrôles:", True, (255, 255, 255))
+        ecran.blit(texte_touches, (20, y_offset))
         
-        texte_espace = fonte_petite.render("ESPACE - Nouvelle vague", True, (200, 200, 200))
-        ecran.blit(texte_espace, (10, y_offset + 90))
+        # Contrôles avec icônes
+        texte_zqsd = fonte_petite.render("ZQSD/↑↓←→ - Héros", True, (100, 200, 255))
+        ecran.blit(texte_zqsd, (20, y_offset + 30))
+        
+        texte_1 = fonte_petite.render(f"1 - Canon ({PRIX_TOUR_CANON}$)", True, (150, 200, 255))
+        ecran.blit(texte_1, (20, y_offset + 60))
+        
+        texte_2 = fonte_petite.render(f"2 - Laser ({PRIX_TOUR_LASER}$)", True, (255, 150, 150))
+        ecran.blit(texte_2, (20, y_offset + 90))
+        
+        texte_espace = fonte_petite.render("ESPACE - Vague", True, (255, 255, 100))
+        ecran.blit(texte_espace, (20, y_offset + 120))
     
     # Mode placement
     if mode_placement and not game_over:
@@ -578,8 +893,18 @@ while en_cours:
     
     # Message entre les vagues
     if not vague_en_cours and not game_over:
-        texte_attente = fonte.render("Appuie sur ESPACE pour la prochaine vague", True, (255, 255, 0))
-        ecran.blit(texte_attente, (LARGEUR // 2 - 300, HAUTEUR // 2))
+        # Panneau central
+        panneau_vague = pygame.Surface((700, 120), pygame.SRCALPHA)
+        panneau_vague.fill((0, 0, 0, 200))
+        ecran.blit(panneau_vague, (LARGEUR // 2 - 350, HAUTEUR // 2 - 60))
+        pygame.draw.rect(ecran, (255, 255, 100), (LARGEUR // 2 - 350, HAUTEUR // 2 - 60, 700, 120), 3)
+        
+        fonte_vague = pygame.font.Font(None, 48)
+        texte_attente = fonte_vague.render("Prêt pour la prochaine vague ?", True, (255, 255, 0))
+        ecran.blit(texte_attente, (LARGEUR // 2 - 280, HAUTEUR // 2 - 40))
+        
+        texte_espace = fonte.render("Appuie sur ESPACE", True, (200, 200, 200))
+        ecran.blit(texte_espace, (LARGEUR // 2 - 150, HAUTEUR // 2 + 20))
     
     # Écran Game Over
     if game_over:
@@ -591,13 +916,18 @@ while en_cours:
         # Textes
         fonte_grande = pygame.font.Font(None, 72)
         texte_game_over = fonte_grande.render("GAME OVER", True, (255, 0, 0))
-        ecran.blit(texte_game_over, (LARGEUR // 2 - 200, HAUTEUR // 2 - 50))
+        ecran.blit(texte_game_over, (LARGEUR // 2 - 200, HAUTEUR // 2 - 100))
         
-        texte_score = fonte.render(f"Tu as survécu jusqu'à la vague {vague_actuelle - 1}", True, (255, 255, 255))
-        ecran.blit(texte_score, (LARGEUR // 2 - 250, HAUTEUR // 2 + 50))
+        # Score
+        texte_score = fonte.render(f"Vague atteinte: {vague_actuelle - 1}", True, (255, 255, 255))
+        ecran.blit(texte_score, (LARGEUR // 2 - 180, HAUTEUR // 2))
+        
+        # NOUVEAU : Afficher les kills
+        texte_kills = fonte.render(f"Monstres tués: {kills_total}", True, (255, 215, 0))
+        ecran.blit(texte_kills, (LARGEUR // 2 - 180, HAUTEUR // 2 + 50))
         
         texte_rejouer = fonte.render("Appuie sur R pour rejouer", True, (255, 255, 0))
-        ecran.blit(texte_rejouer, (LARGEUR // 2 - 200, HAUTEUR // 2 + 100))
+        ecran.blit(texte_rejouer, (LARGEUR // 2 - 200, HAUTEUR // 2 + 120))
     
     pygame.display.flip()
     horloge.tick(60)
